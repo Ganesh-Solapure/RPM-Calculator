@@ -1,367 +1,378 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Engine RPM ↔ Speed Calculator</title>
-
-  <!-- Minimal CSS: avoid heavy shadows and animations -->
-  <style>
-    :root{
-      --bg:#0f1720; --card:#0b1220; --muted:#9aa6b2; --accent:#1f6feb; --panel:#101418; --text:#e6eef6;
-      --max-width:1000px;
-    }
-    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071019 0%,var(--bg) 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
-    .wrap{max-width:var(--max-width);margin:28px auto;padding:22px;}
-    h1{font-size:2.4rem;margin:0 0 6px 0;font-weight:600}
-    p.lead{margin:0 0 18px 0;color:var(--muted);font-size:0.95rem}
-    .grid{display:flex;gap:12px;flex-wrap:wrap}
-    .col{flex:1 1 220px;min-width:220px}
-    label{display:block;color:var(--muted);font-size:0.9rem;margin-bottom:6px}
-    input[type="number"], input[type="text"], select{
-      width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.04); background:#081018; color:var(--text);
-      box-sizing:border-box; font-size:0.95rem;
-    }
-    button{
-      padding:10px 14px;border-radius:10px;border:0;background:var(--panel);color:var(--text);cursor:pointer;font-weight:600;
-    }
-    .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
-    .btn-primary{background:var(--accent);color:white}
-    .panel{background:linear-gradient(180deg,#07121b 0%, #07141b 100%);padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
-    pre#results{white-space:pre-wrap;background:#f6f7f9;color:#0b1320;padding:14px;border-radius:8px;border:1px solid rgba(0,0,0,0.05);overflow:auto}
-    .muted{color:var(--muted)}
-    canvas{width:100%;height:260px;display:block}
-    @media (max-width:740px){ h1{font-size:1.6rem} canvas{height:200px} .col{min-width:100%} }
-  </style>
-
-  <!-- Chart.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Auto RPM Calculator</title>
+<style>
+  :root{
+    --bg:#07121b; --panel:#0b1620; --muted:#9aa6b2; --text:#e6eef6; --accent:#1f6feb;
+  }
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(#051016,#07121b);color:var(--text);padding:18px;}
+  .wrap{max-width:920px;margin:0 auto}
+  h1{margin:0 0 8px;font-weight:600}
+  .muted{color:var(--muted);font-size:0.95rem}
+  .grid{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+  .card{background:linear-gradient(#071922,#071a21);padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+  label{display:block;color:var(--muted);font-size:0.9rem;margin-bottom:6px}
+  input,select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:#081018;color:var(--text);font-size:0.95rem;box-sizing:border-box}
+  .col{flex:1 1 220px;min-width:220px}
+  .controls{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+  button{padding:9px 12px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+  .small{font-size:0.85rem;color:var(--muted)}
+  pre{background:#07121b;border-radius:8px;padding:12px;color:var(--muted);white-space:pre-wrap}
+  .status {font-size:0.88rem;margin-left:8px;color:var(--muted)}
+  .computed-badge{background:#14324a;color:#bfe6ff;padding:4px 6px;border-radius:6px;font-size:0.78rem;margin-left:8px}
+  .warn{color:#ffb4b4;font-weight:600;margin-top:10px}
+  @media (max-width:720px){ .col{min-width:100%} button{width:100%} }
+</style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Engine RPM ↔ Speed Calculator</h1>
+    <h1>Auto RPM Calculator</h1>
+    <div class="muted">Enter any combination of values. Missing values will be filled automatically when possible.</div>
 
-
-    <section class="panel" aria-labelledby="inputs-heading">
-      <h2 id="inputs-heading" style="margin:0 0 10px 0;font-size:1.1rem">Inputs</h2>
-
+    <div class="card" style="margin-top:14px">
       <div class="grid">
         <div class="col">
-          <label for="speed">Vehicle speed</label>
-          <input id="speed" type="number" value="60" step="0.1" />
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <label for="speed">Speed</label>
+          <input id="speed" placeholder="e.g. 60" />
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
             <select id="speedUnit" style="width:110px">
               <option value="mph">mph</option>
               <option value="kmh">km/h</option>
             </select>
-            <button id="calcBtn" class="btn-primary">Calculate</button>
+            <div id="speedTag" class="status"></div>
           </div>
         </div>
 
         <div class="col">
-          <label for="tireIn">Tire diameter (inches)</label>
-          <input id="tireIn" type="number" value="23" step="0.01" />
-          <div class="muted" style="font-size:0.85rem;margin-top:6px">or enter tyre code (e.g. <code>185/55R15</code>)</div>
-        </div>
-
-        <div class="col">
-          <label for="tyreCode">Tyre code</label>
-          <div style="display:flex;gap:8px">
-            <input id="tyreCode" type="text" placeholder="185/55R15" />
-            <button id="parseTyre">Parse</button>
+          <label for="tire">Tire diameter (inches)</label>
+          <input id="tire" placeholder="e.g. 23" />
+          <div style="display:flex;align-items:center;margin-top:8px">
+            <input id="tyreCode" placeholder="Tyre code e.g. 185/55R15" style="flex:1;margin-right:8px"/>
+            <button id="parseTyre" style="background:#2d4251;padding:8px 10px">Parse</button>
           </div>
+          <div id="tireTag" class="status"></div>
         </div>
 
         <div class="col">
           <label for="ratio">Transmission ratio</label>
-          <input id="ratio" type="number" value="3.99" step="0.001" />
-          <div style="margin-top:8px" class="muted small">Save presets for cars/gears below</div>
+          <input id="ratio" placeholder="e.g. 3.99"/>
+          <div id="ratioTag" class="status"></div>
+        </div>
+
+        <div class="col">
+          <label for="wheel">Wheel RPM</label>
+          <input id="wheel" placeholder="e.g. 877"/>
+          <div id="wheelTag" class="status"></div>
+        </div>
+
+        <div class="col">
+          <label for="engine">Engine RPM</label>
+          <input id="engine" placeholder="e.g. 3500"/>
+          <div id="engineTag" class="status"></div>
         </div>
       </div>
 
-      <div class="controls" style="margin-top:12px">
-        <button id="savePreset">Save preset</button>
-        <select id="presets" style="min-width:160px"><option value="">-- choose --</option></select>
-        <button id="delPreset">Delete preset</button>
-
+      <div class="controls">
+        <button id="resetComputed" style="background:#2b3b4a">Clear computed</button>
         <div style="flex:1"></div>
-
-        <input id="wsUrl" placeholder="wss://your-server.example/ws" style="padding:8px 10px;border-radius:8px;background:#071018;border:1px solid rgba(255,255,255,0.03);min-width:300px" />
-        <button id="connectWs">Connect WS</button>
-        <div id="wsStatus" class="muted" style="margin-left:8px">Not connected</div>
+        <div class="small muted">Last edited: <span id="lastEdited">—</span></div>
       </div>
-    </section>
 
-    <section style="margin-top:14px">
-      <h3 style="margin:6px 0">Results</h3>
-      <div class="panel">
-        <pre id="results">Press Calculate</pre>
-      </div>
-    </section>
+      <div id="warn" class="warn" aria-live="polite" style="display:none"></div>
+    </div>
 
-    <section style="margin-top:16px">
-      <h3 style="margin:6px 0">RPM vs Speed (for current tire & ratio)</h3>
-      <div class="panel">
-        <canvas id="chart"></canvas>
-      </div>
-    </section>
-
-    <section style="margin-top:16px">
-      <h3 style="margin:6px 0">Live data (placeholder)</h3>
-      <div class="panel">
-        <div style="display:flex;gap:8px;align-items:center">
-          <div class="muted">Latest live payload:</div>
-          <div id="liveOut" style="flex:1; color:var(--text); font-family:monospace; font-size:0.9rem; padding:6px 8px; background:#081018;border-radius:6px;overflow:auto; max-height:120px">No live data</div>
-        </div>
-      </div>
+    <section style="margin-top:12px">
+      <h3 style="margin:6px 0">Output</h3>
+      <pre id="debug">Waiting for input...</pre>
     </section>
   </div>
 
-  <script>
-  /**********************
-   * Utility & formulas *
-   **********************/
-  const el = id => document.getElementById(id);
+<script>
+/* ----- Utility functions & formulas ----- */
+const el = id => document.getElementById(id);
+const NUM_TOL = 1e-6;
+function toNum(v){ v = (v+'').trim(); return v === '' ? null : (isFinite(Number(v)) ? Number(v) : null); }
+function mphFrom(value, unit){ return unit === 'kmh' ? value * 0.621371 : value; }
+function fromMph(mph, unit){ return unit === 'kmh' ? mph / 0.621371 : mph; }
 
-  function tyreDiameterFromCode(code) {
-    const m = code.trim().match(/^(\d{3})\/(\d{2})R(\d{2})$/i);
-    if (!m) return null;
-    const width = Number(m[1]); // mm
-    const aspect = Number(m[2]); // %
-    const rim = Number(m[3]); // inches
-    const sidewallIn = (width * (aspect/100)) / 25.4;
-    return rim + 2*sidewallIn;
-  }
+function wheelsRPM_from_speed(speed_mph, tireDiaIn) {
+  return (speed_mph * 1056) / (Math.PI * tireDiaIn);
+}
+function speed_from_wheelsRPM(wheelsRPM, tireDiaIn) {
+  return (wheelsRPM * Math.PI * tireDiaIn) / 1056;
+}
+function engine_from_wheels_and_ratio(wheels, ratio) { return wheels * ratio; }
+function wheels_from_engine_and_ratio(engine, ratio) { return ratio === 0 ? null : engine / ratio; }
+function ratio_from_engine_and_wheels(engine, wheels) { return wheels === 0 ? null : engine / wheels; }
+function tyreDiameterFromCode(code) {
+  const m = (code||'').trim().match(/^(\d{3})\/(\d{2})R(\d{2})$/i);
+  if (!m) return null;
+  const width = Number(m[1]); const aspect = Number(m[2]); const rim = Number(m[3]);
+  const sideIn = (width*(aspect/100))/25.4;
+  return rim + 2*sideIn;
+}
 
-  function wheelsRPM_from_speed(speed, unit, tireDiaIn) {
-    let speed_mph = speed;
-    if (unit === 'kmh') speed_mph = speed * 0.621371;
-    return (speed_mph * 1056) / (Math.PI * tireDiaIn);
-  }
+/* ----- DOM fields ----- */
+const fields = {
+  speed: el('speed'),
+  speedUnit: el('speedUnit'),
+  tire: el('tire'),
+  tyreCode: el('tyreCode'),
+  ratio: el('ratio'),
+  wheel: el('wheel'),
+  engine: el('engine'),
+};
+const tags = {
+  speed: el('speedTag'),
+  tire: el('tireTag'),
+  ratio: el('ratioTag'),
+  wheel: el('wheelTag'),
+  engine: el('engineTag'),
+};
+const debug = el('debug');
+const warnEl = el('warn');
+const lastEditedEl = el('lastEdited');
 
-  function engineRPM_from_wheels(wheelsRPM, ratio){ return wheelsRPM * ratio; }
+let userProvided = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
+let lastEdited = null; // id of last edited field
+let computedMarker = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
 
-  /*************************
-   * Presets (localStorage) *
-   *************************/
-  const PRESETS_KEY = 'rpm_calc_presets_v1';
-  function loadPresets(){ try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}'); } catch(e){ return {}; } }
-  function savePresets(obj){ localStorage.setItem(PRESETS_KEY, JSON.stringify(obj)); }
-  function refreshPresetList(){
-    const sel = el('presets');
-    const curr = sel.value;
-    sel.innerHTML = '<option value="">-- choose --</option>';
-    const ps = loadPresets();
-    Object.keys(ps).forEach(k => {
-      const o = document.createElement('option'); o.value = k; o.textContent = k; sel.appendChild(o);
-    });
-    if (curr && Array.from(sel.options).some(o => o.value === curr)) sel.value = curr;
-  }
+/* ----- Input handling & debounce ----- */
+let debounceTimer = null;
+const DEBOUNCE_MS = 300;
 
-  /******************
-   * Chart (single) *
-   ******************/
-  const chartCtx = el('chart').getContext('2d');
-  // Chart options optimized for performance
-  const CHART_OPTIONS = {
-    type: 'line',
-    data: {
-      labels: [], datasets: [{
-        label: 'Engine RPM',
-        data: [],
-        fill: false,
-        tension: 0.15,
-        pointRadius: 0 // reduce points cost
-      }]
-    },
-    options: {
-      animation: false, // disable animation
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: true } },
-      scales: {
-        x: { title: { display:true, text: 'Speed (mph)' }, ticks: { maxTicksLimit: 12 } },
-        y: { title: { display:true, text: 'Engine RPM' } }
-      }
+function markUserProvided(id, isProvided) {
+  userProvided[id] = isProvided;
+  if (isProvided) computedMarker[id] = false; // user overrides computed
+}
+
+function inputHandler(e){
+  const id = e.target.id;
+  lastEdited = id;
+  lastEditedEl.textContent = id;
+  // determine if field now has user value
+  const v = toNum(fields[id]?.value ?? '');
+  markUserProvided(id, v !== null && id !== 'tyreCode');
+  // if tyreCode field typed, not mark until parse clicked
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(autoCompute, DEBOUNCE_MS);
+}
+
+Object.keys(fields).forEach(k => {
+  if (k === 'tyreCode') return; // tyreCode handled separately by parse button
+  fields[k].addEventListener('input', inputHandler);
+});
+
+/* tyre code parse */
+el('parseTyre').addEventListener('click', ()=>{
+  const code = fields.tyreCode.value.trim();
+  const d = tyreDiameterFromCode(code);
+  if (d === null) { alert('tyre code not recognized (use 185/55R15)'); return; }
+  fields.tire.value = d.toFixed(3);
+  markUserProvided('tire', true);
+  lastEdited = 'tire'; lastEditedEl.textContent = 'tire';
+  autoCompute();
+});
+
+/* Clear computed values button */
+el('resetComputed').addEventListener('click', ()=>{
+  Object.keys(computedMarker).forEach(k => {
+    if (computedMarker[k]) {
+      fields[k].value = '';
+      computedMarker[k] = false;
     }
+    userProvided[k] = !!toNum(fields[k].value);
+    tags[k].textContent = '';
+  });
+  warnEl.style.display = 'none';
+  debug.textContent = 'Cleared computed values.';
+});
+
+/* ----- Core auto-compute algorithm ----- */
+function autoCompute() {
+  warnEl.style.display = 'none';
+  // Read current inputs
+  let raw = {
+    speed: toNum(fields.speed.value),
+    unit: fields.speedUnit.value,
+    tire: toNum(fields.tire.value),
+    ratio: toNum(fields.ratio.value),
+    wheel: toNum(fields.wheel.value),
+    engine: toNum(fields.engine.value)
   };
-  const chart = new Chart(chartCtx, CHART_OPTIONS);
 
-  function plotRPMvsSpeed(tire, ratio, unit) {
-    // reduced sample: every 2 mph up to 140
-    const speeds = [];
-    const engine = [];
-    for (let s = 0; s <= 140; s += 2) {
-      speeds.push(s);
-      const w = wheelsRPM_from_speed(s, unit, tire);
-      engine.push(Math.round(engineRPM_from_wheels(w, ratio) * 100) / 100);
+  // internal representation uses speed_mph
+  let state = {
+    speed_mph: raw.speed === null ? null : mphFrom(raw.speed, raw.unit),
+    tire: raw.tire,
+    ratio: raw.ratio,
+    wheel: raw.wheel,
+    engine: raw.engine
+  };
+
+  // Respect userProvided: values that are userProvided should not be clobbered
+  // userProvided flags updated earlier in inputHandler; ensure they reflect current emptiness
+  userProvided.speed = toNum(fields.speed.value) !== null;
+  userProvided.tire = toNum(fields.tire.value) !== null;
+  userProvided.ratio = toNum(fields.ratio.value) !== null;
+  userProvided.wheel = toNum(fields.wheel.value) !== null;
+  userProvided.engine = toNum(fields.engine.value) !== null;
+
+  // If tyre code present but tire empty, we didn't parse — don't assume
+  // computedMarker flags track which fields we set automatically
+  Object.keys(computedMarker).forEach(k => { if (!userProvided[k]) computedMarker[k] = false; });
+
+  // Iteratively try to deduce unknowns from knowns.
+  let changed = true; let iter = 0;
+  const MAX_ITER = 10;
+  while (changed && iter++ < MAX_ITER) {
+    changed = false;
+
+    // 1) wheels from speed+tire
+    if ((state.wheel === null) && (state.speed_mph !== null) && (state.tire !== null)) {
+      const val = wheelsRPM_from_speed(state.speed_mph, state.tire);
+      state.wheel = val; changed = true; computedMarker.wheel = true;
     }
-    // update in place
-    chart.data.labels = speeds;
-    chart.data.datasets[0].data = engine;
-    chart.update({duration: 0}); // instant update
+
+    // 2) wheels from engine+ratio
+    if ((state.wheel === null) && (state.engine !== null) && (state.ratio !== null) && Math.abs(state.ratio) > NUM_TOL) {
+      const val = wheels_from_engine_and_ratio(state.engine, state.ratio);
+      state.wheel = val; changed = true; computedMarker.wheel = true;
+    }
+
+    // 3) engine from wheels+ratio
+    if ((state.engine === null) && (state.wheel !== null) && (state.ratio !== null)) {
+      const val = engine_from_wheels_and_ratio(state.wheel, state.ratio);
+      state.engine = val; changed = true; computedMarker.engine = true;
+    }
+
+    // 4) ratio from engine and wheels
+    if ((state.ratio === null) && (state.engine !== null) && (state.wheel !== null) && Math.abs(state.wheel) > NUM_TOL) {
+      const val = ratio_from_engine_and_wheels(state.engine, state.wheel);
+      state.ratio = val; changed = true; computedMarker.ratio = true;
+    }
+
+    // 5) speed from wheels+tire
+    if ((state.speed_mph === null) && (state.wheel !== null) && (state.tire !== null)) {
+      const val = speed_from_wheelsRPM(state.wheel, state.tire);
+      state.speed_mph = val; changed = true; computedMarker.speed = true;
+    }
+
+    // 6) tire from speed + wheels
+    if ((state.tire === null) && (state.speed_mph !== null) && (state.wheel !== null) && Math.abs(state.wheel) > NUM_TOL) {
+      // rearrange speed formula: tire = (speed_mph * 1056) / (π * wheelsRPM)
+      const val = (state.speed_mph * 1056) / (Math.PI * state.wheel);
+      state.tire = val; changed = true; computedMarker.tire = true;
+    }
   }
 
-  /*********************
-   * Calculation & UI  *
-   *********************/
-  function doCalc() {
-    const speed = Number(el('speed').value);
-    const unit = el('speedUnit').value;
-    const tire = Number(el('tireIn').value);
-    const ratio = Number(el('ratio').value);
-
-    if (!speed || !tire || !ratio || isNaN(speed) || isNaN(tire) || isNaN(ratio)) {
-      el('results').textContent = 'Please enter valid numbers for speed, tire diameter and transmission ratio.';
-      return;
-    }
-
-    const wheelsRPM = wheelsRPM_from_speed(speed, unit, tire);
-    const engineRPM = engineRPM_from_wheels(wheelsRPM, ratio);
-
-    // Minimal, single DOM write
-    el('results').textContent =
-`Inputs:
-  Speed: ${speed} ${unit}
-  Tire diameter: ${tire.toFixed(3)} in
-  Transmission ratio: ${ratio}
-
-Results:
-  Wheel RPM: ${wheelsRPM.toFixed(2)} rpm
-  Engine RPM: ${engineRPM.toFixed(2)} rpm`;
-
-    // update chart (fast)
-    plotRPMvsSpeed(tire, ratio, unit);
+  // Now we have computed state; handle conflicts
+  const conflicts = [];
+  // compare computed values to user-provided ones (if both exist)
+  if (userProvided.speed && state.speed_mph !== null) {
+    const userSpeedMph = mphFrom(toNum(fields.speed.value), fields.speedUnit.value);
+    if (Math.abs(userSpeedMph - state.speed_mph) > 1e-3) conflicts.push('speed');
+  }
+  if (userProvided.tire && state.tire !== null) {
+    const userT = toNum(fields.tire.value);
+    if (Math.abs(userT - state.tire) > 1e-6) conflicts.push('tire');
+  }
+  if (userProvided.ratio && state.ratio !== null) {
+    const userR = toNum(fields.ratio.value);
+    if (Math.abs(userR - state.ratio) > 1e-6) conflicts.push('ratio');
+  }
+  if (userProvided.wheel && state.wheel !== null) {
+    const userW = toNum(fields.wheel.value);
+    if (Math.abs(userW - state.wheel) > 1e-3) conflicts.push('wheel');
+  }
+  if (userProvided.engine && state.engine !== null) {
+    const userE = toNum(fields.engine.value);
+    if (Math.abs(userE - state.engine) > 1e-3) conflicts.push('engine');
   }
 
-  // Debounce for calculate button (short lockout)
-  let calcLock = false;
-  el('calcBtn').addEventListener('click', () => {
-    if (calcLock) return;
-    calcLock = true;
-    doCalc();
-    setTimeout(() => { calcLock = false; }, 250); // 250 ms lockout
-  });
+  // If conflicts exist, do not override user provided values. Show warning text describing the conflict.
+  if (conflicts.length) {
+    warnEl.style.display = 'block';
+    warnEl.textContent = 'Conflicting inputs detected for: ' + conflicts.join(', ') + '. Provided user values are preserved.';
+  } else {
+    warnEl.style.display = 'none';
+  }
 
-  // parse tyre code
-  el('parseTyre').addEventListener('click', () => {
-    const code = el('tyreCode').value.trim();
-    const d = tyreDiameterFromCode(code);
-    if (d === null) {
-      alert('Tyre code not recognized. Use format 185/55R15');
-      return;
-    }
-    el('tireIn').value = d.toFixed(2);
-  });
-
-  // presets
-  el('savePreset').addEventListener('click', () => {
-    const name = prompt('Preset name? (e.g., MyCar_3rd)');
-    if (!name) return;
-    const ps = loadPresets();
-    ps[name] = {
-      speed: el('speed').value,
-      speedUnit: el('speedUnit').value,
-      tireIn: el('tireIn').value,
-      ratio: el('ratio').value,
-      tyreCode: el('tyreCode').value
-    };
-    savePresets(ps);
-    refreshPresetList();
-  });
-
-  el('presets').addEventListener('change', () => {
-    const k = el('presets').value;
-    if (!k) return;
-    const ps = loadPresets();
-    const chosen = ps[k];
-    el('speed').value = chosen.speed;
-    el('speedUnit').value = chosen.speedUnit;
-    el('tireIn').value = chosen.tireIn;
-    el('ratio').value = chosen.ratio;
-    el('tyreCode').value = chosen.tyreCode || '';
-    doCalc();
-  });
-
-  el('delPreset').addEventListener('click', () => {
-    const k = el('presets').value;
-    if (!k) return alert('Choose a preset first');
-    if (!confirm('Delete preset '+k+'?')) return;
-    const ps = loadPresets(); delete ps[k]; savePresets(ps); refreshPresetList();
-  });
-
-  // init presets on load
-  refreshPresetList();
-
-  /************************
-   * WebSocket (throttled)
-   ************************/
-  let ws = null;
-  let lastWsUpdate = 0;
-  const MIN_MS = 200; // throttle updates to 200ms (5Hz)
-
-  function safeUpdateLiveUI(parsed) {
-    // Only update minimal DOM fields to reduce paint
-    if (parsed && typeof parsed === 'object') {
-      const wheel = parsed.wheel_rpm ?? parsed.wheels_rpm ?? parsed.wheelRPM;
-      const engine = parsed.engine_rpm ?? parsed.engineRPM;
-      if (wheel !== undefined) {
-        const engineCalc = engine !== undefined ? engine : (wheel * Number(el('ratio').value));
-        el('liveOut').textContent = `wheel_rpm: ${Number(wheel).toFixed(2)}\nengine_rpm: ${Number(engineCalc).toFixed(2)}`;
-        // Optionally update the results panel with a short live message
-        el('results').textContent = `Live wheel rpm: ${Number(wheel).toFixed(2)} rpm\nLive engine rpm: ${Number(engineCalc).toFixed(2)} rpm`;
-      } else {
-        // fallback: show JSON only when it changes at throttled rate
-        el('liveOut').textContent = JSON.stringify(parsed, null, 2);
-      }
+  // Update UI for fields that are not userProvided (i.e. computed) with computed values
+  // and set "computed" badges. Don't overwrite user-provided fields.
+  function setIfComputed(key, value, toDisplay, decimals=3) {
+    if (value === null || value === undefined || isNaN(value)) return;
+    if (!userProvided[key]) {
+      // mark computed and write value
+      computedMarker[key] = true;
+      fields[key].value = Number(value).toFixed(decimals);
+      tags[key].innerHTML = '<span class="computed-badge">computed</span>';
     } else {
-      el('liveOut').textContent = String(parsed);
+      // user-provided: clear computed tag
+      tags[key].innerHTML = '';
     }
   }
 
-  el('connectWs').addEventListener('click', () => {
-    const url = el('wsUrl').value.trim();
-    if (!url) return alert('Enter a wss:// URL for secure WebSocket.');
-    if (ws) {
-      ws.close();
-      ws = null;
-      el('wsStatus').textContent = 'Disconnected';
-      el('connectWs').textContent = 'Connect WS';
-      return;
-    }
-    try {
-      ws = new WebSocket(url);
-      el('wsStatus').textContent = 'Connecting...';
-      el('connectWs').textContent = 'Disconnect WS';
+  // speed convert back to currently selected unit for UI
+  if (state.speed_mph !== null) {
+    const disp = fromMph(state.speed_mph, fields.speedUnit.value);
+    setIfComputed('speed', disp, 'speed', 3);
+  } else {
+    if (!userProvided.speed) fields.speed.value = '';
+    tags.speed.innerHTML = '';
+  }
 
-      ws.onopen = () => { el('wsStatus').textContent = 'Connected'; };
-      ws.onerror = () => { el('wsStatus').textContent = 'WebSocket error'; };
-      ws.onclose = () => { el('wsStatus').textContent = 'Closed'; ws = null; el('connectWs').textContent = 'Connect WS'; };
+  setIfComputed('tire', state.tire, 'tire', 3);
+  setIfComputed('ratio', state.ratio, 'ratio', 4);
+  setIfComputed('wheel', state.wheel, 'wheel', 3);
+  setIfComputed('engine', state.engine, 'engine', 2);
 
-      ws.onmessage = (ev) => {
-        const now = Date.now();
-        // parse always, but throttle DOM update
-        let parsed = null;
-        try { parsed = JSON.parse(ev.data); } catch(e) { parsed = ev.data; }
-        if (now - lastWsUpdate >= MIN_MS) {
-          lastWsUpdate = now;
-          // Update UI minimally
-          safeUpdateLiveUI(parsed);
-        }
-      };
-    } catch(e) {
-      alert('WebSocket error: ' + (e.message || e));
-      ws = null;
-      el('wsStatus').textContent = 'Error';
-    }
+  // If user provided a field that previously was computed, ensure tag cleared
+  Object.keys(userProvided).forEach(k => {
+    if (userProvided[k]) tags[k].innerHTML = '';
   });
 
-  /*****************
-   * Init default  *
-   *****************/
-  // initial calculate and plot (fast)
-  doCalc();
+  // Update debug panel / summary
+  const summary = {
+    speed_mph: state.speed_mph === null ? null : Number(state.speed_mph.toFixed(6)),
+    speed_display: state.speed_mph === null ? null : Number(fromMph(state.speed_mph, fields.speedUnit.value).toFixed(6)),
+    tire: state.tire === null ? null : Number(state.tire.toFixed(6)),
+    ratio: state.ratio === null ? null : Number(state.ratio.toFixed(6)),
+    wheelRPM: state.wheel === null ? null : Number(state.wheel.toFixed(6)),
+    engineRPM: state.engine === null ? null : Number(state.engine.toFixed(6)),
+    userProvided: {...userProvided},
+    computedMarker: {...computedMarker},
+    lastEdited: lastEdited || '—',
+    conflicts: conflicts
+  };
 
-  </script>
+  debug.textContent = JSON.stringify(summary, null, 2);
+}
+
+/* Initialize with event listeners and an initial compute */
+autoCompute();
+
+/* attach input listeners to tyre code field too (not userProvided until parse) */
+fields.tyreCode.addEventListener('input', ()=> { /* do nothing until parse clicked */ });
+
+/* Keep track of userTyped when fields changed: if user types non-empty -> userProvided true; if cleared -> false */
+Object.keys(userProvided).forEach(k => {
+  if (k === 'speed') {
+    fields.speed.addEventListener('input', ()=> markUserProvided('speed', toNum(fields.speed.value) !== null));
+    fields.speedUnit.addEventListener('change', autoCompute);
+  } else {
+    fields[k].addEventListener('input', ()=> markUserProvided(k, toNum(fields[k].value) !== null));
+  }
+});
+
+/* Recompute on unit change */
+fields.speedUnit.addEventListener('change', ()=> {
+  // If speed was computed (not user) adjust displayed value to new unit
+  autoCompute();
+});
+</script>
 </body>
 </html>
