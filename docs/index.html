@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Auto RPM Calculator</title>
+<title>Auto RPM Calculator — manual Calculate</title>
 <style>
   :root{
-    --bg:#07121b; --panel:#0b1620; --muted:#9aa6b2; --text:#e6eef6; --accent:#1f6feb;
+    --bg:#07121b; --card:#0b1620; --muted:#9aa6b2; --text:#e6eef6; --accent:#1f6feb;
   }
   body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(#051016,#07121b);color:var(--text);padding:18px;}
   .wrap{max-width:920px;margin:0 auto}
@@ -20,23 +20,25 @@
   .controls{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
   button{padding:9px 12px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
   .small{font-size:0.85rem;color:var(--muted)}
-  pre{background:#07121b;border-radius:8px;padding:12px;color:var(--muted);white-space:pre-wrap}
+  pre.output{background:#07121b;border-radius:8px;padding:12px;color:var(--muted);white-space:pre-wrap}
   .status {font-size:0.88rem;margin-left:8px;color:var(--muted)}
   .computed-badge{background:#14324a;color:#bfe6ff;padding:4px 6px;border-radius:6px;font-size:0.78rem;margin-left:8px}
   .warn{color:#ffb4b4;font-weight:600;margin-top:10px}
+  .hint{color:#8fb0d4;font-size:0.9rem;margin-top:8px}
   @media (max-width:720px){ .col{min-width:100%} button{width:100%} }
 </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Auto RPM Calculator</h1>
-    <div class="muted">Enter any combination of values. Missing values will be filled automatically when possible.</div>
+    <div class="muted">Enter any combination of values (Speed, Tire diameter, Transmission ratio, Wheel RPM, Engine RPM). <strong>Calculations occur only when you press the <em>Calculate</em> button</strong>.</div>
+    <div class="hint">Tip: While editing fields the page won't compute — press Calculate (Enter) when ready.</div>
 
     <div class="card" style="margin-top:14px">
       <div class="grid">
         <div class="col">
           <label for="speed">Speed</label>
-          <input id="speed" placeholder="e.g. 60" />
+          <input id="speed" type="number" inputmode="decimal" placeholder="e.g. 60" />
           <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
             <select id="speedUnit" style="width:110px">
               <option value="mph">mph</option>
@@ -48,9 +50,9 @@
 
         <div class="col">
           <label for="tire">Tire diameter (inches)</label>
-          <input id="tire" placeholder="e.g. 23" />
+          <input id="tire" type="number" inputmode="decimal" placeholder="e.g. 23" />
           <div style="display:flex;align-items:center;margin-top:8px">
-            <input id="tyreCode" placeholder="Tyre code e.g. 185/55R15" style="flex:1;margin-right:8px"/>
+            <input id="tyreCode" type="text" placeholder="Tyre code e.g. 185/55R15" style="flex:1;margin-right:8px"/>
             <button id="parseTyre" style="background:#2d4251;padding:8px 10px">Parse</button>
           </div>
           <div id="tireTag" class="status"></div>
@@ -58,64 +60,78 @@
 
         <div class="col">
           <label for="ratio">Transmission ratio</label>
-          <input id="ratio" placeholder="e.g. 3.99"/>
+          <input id="ratio" type="number" inputmode="decimal" placeholder="e.g. 3.99"/>
           <div id="ratioTag" class="status"></div>
         </div>
 
         <div class="col">
           <label for="wheel">Wheel RPM</label>
-          <input id="wheel" placeholder="e.g. 877"/>
+          <input id="wheel" type="number" inputmode="decimal" placeholder="e.g. 877"/>
           <div id="wheelTag" class="status"></div>
         </div>
 
         <div class="col">
           <label for="engine">Engine RPM</label>
-          <input id="engine" placeholder="e.g. 3500"/>
+          <input id="engine" type="number" inputmode="decimal" placeholder="e.g. 3500"/>
           <div id="engineTag" class="status"></div>
         </div>
       </div>
 
       <div class="controls">
-        <button id="resetComputed" style="background:#2b3b4a">Clear computed</button>
+        <button id="calcBtn">Calculate (Enter)</button>
+        <button id="clearComputed" style="background:#2b3b4a">Clear computed</button>
+        <button id="resetAll" style="background:#22333b">Reset all</button>
         <div style="flex:1"></div>
-        <div class="small muted">Last edited: <span id="lastEdited">—</span></div>
+        <div class="small muted">Last action: <span id="lastAction">none</span></div>
       </div>
 
-      <div id="warn" class="warn" aria-live="polite" style="display:none"></div>
+      <div id="warn" class="warn" style="display:none"></div>
     </div>
 
     <section style="margin-top:12px">
-      <h3 style="margin:6px 0">Output</h3>
-      <pre id="debug">Waiting for input...</pre>
+      <h3 style="margin:6px 0">Output — formulas & results</h3>
+      <div class="card">
+        <pre id="output" class="output">Press "Calculate (Enter)" to compute. The output will show the formulas used and numeric results.</pre>
+      </div>
     </section>
   </div>
 
 <script>
-/* ----- Utility functions & formulas ----- */
+/* -------------------------
+   Utilities & Physics
+   ------------------------- */
 const el = id => document.getElementById(id);
-const NUM_TOL = 1e-6;
-function toNum(v){ v = (v+'').trim(); return v === '' ? null : (isFinite(Number(v)) ? Number(v) : null); }
-function mphFrom(value, unit){ return unit === 'kmh' ? value * 0.621371 : value; }
-function fromMph(mph, unit){ return unit === 'kmh' ? mph / 0.621371 : mph; }
+const toNum = v => {
+  if (v === null || v === undefined) return null;
+  const s = ('' + v).trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+const NUM_TOL = 1e-9;
+const mphFrom = (value, unit) => unit === 'kmh' ? value * 0.621371 : value;
+const fromMph = (mph, unit) => unit === 'kmh' ? mph / 0.621371 : mph;
 
 function wheelsRPM_from_speed(speed_mph, tireDiaIn) {
   return (speed_mph * 1056) / (Math.PI * tireDiaIn);
 }
-function speed_from_wheelsRPM(wheelsRPM, tireDiaIn) {
+function speed_from_wheelsRPM(wheelsRPM, tireDiaIn){
   return (wheelsRPM * Math.PI * tireDiaIn) / 1056;
 }
-function engine_from_wheels_and_ratio(wheels, ratio) { return wheels * ratio; }
-function wheels_from_engine_and_ratio(engine, ratio) { return ratio === 0 ? null : engine / ratio; }
-function ratio_from_engine_and_wheels(engine, wheels) { return wheels === 0 ? null : engine / wheels; }
-function tyreDiameterFromCode(code) {
+function engine_from_wheels_and_ratio(wheels, ratio){ return wheels * ratio; }
+function wheels_from_engine_and_ratio(engine, ratio){ return ratio === 0 ? null : engine / ratio; }
+function ratio_from_engine_and_wheels(engine, wheels){ return wheels === 0 ? null : engine / wheels; }
+function tyreDiameterFromCode(code){
   const m = (code||'').trim().match(/^(\d{3})\/(\d{2})R(\d{2})$/i);
   if (!m) return null;
-  const width = Number(m[1]); const aspect = Number(m[2]); const rim = Number(m[3]);
-  const sideIn = (width*(aspect/100))/25.4;
+  const width = Number(m[1]), aspect = Number(m[2]), rim = Number(m[3]);
+  const sideIn = (width * (aspect/100)) / 25.4;
   return rim + 2*sideIn;
 }
 
-/* ----- DOM fields ----- */
+/* -------------------------
+   DOM references & state
+   ------------------------- */
 const fields = {
   speed: el('speed'),
   speedUnit: el('speedUnit'),
@@ -123,80 +139,65 @@ const fields = {
   tyreCode: el('tyreCode'),
   ratio: el('ratio'),
   wheel: el('wheel'),
-  engine: el('engine'),
+  engine: el('engine')
 };
 const tags = {
   speed: el('speedTag'),
   tire: el('tireTag'),
   ratio: el('ratioTag'),
   wheel: el('wheelTag'),
-  engine: el('engineTag'),
+  engine: el('engineTag')
 };
-const debug = el('debug');
+const output = el('output');
 const warnEl = el('warn');
-const lastEditedEl = el('lastEdited');
+const lastAction = el('lastAction');
 
 let userProvided = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
-let lastEdited = null; // id of last edited field
 let computedMarker = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
 
-/* ----- Input handling & debounce ----- */
-let debounceTimer = null;
-const DEBOUNCE_MS = 300;
-
-function markUserProvided(id, isProvided) {
-  userProvided[id] = isProvided;
-  if (isProvided) computedMarker[id] = false; // user overrides computed
+/* Initialize flags based on non-empty fields (but we don't auto-calc) */
+function refreshUserProvidedFlags() {
+  userProvided.speed = toNum(fields.speed.value) !== null;
+  userProvided.tire = toNum(fields.tire.value) !== null;
+  userProvided.ratio = toNum(fields.ratio.value) !== null;
+  userProvided.wheel = toNum(fields.wheel.value) !== null;
+  userProvided.engine = toNum(fields.engine.value) !== null;
 }
+refreshUserProvidedFlags();
 
-function inputHandler(e){
-  const id = e.target.id;
-  lastEdited = id;
-  lastEditedEl.textContent = id;
-  // determine if field now has user value
-  const v = toNum(fields[id]?.value ?? '');
-  markUserProvided(id, v !== null && id !== 'tyreCode');
-  // if tyreCode field typed, not mark until parse clicked
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(autoCompute, DEBOUNCE_MS);
-}
-
+/* When user types, mark that field as user deliberately provided.
+   Note: we DO NOT compute on input — compute only when Calculate pressed. */
 Object.keys(fields).forEach(k => {
-  if (k === 'tyreCode') return; // tyreCode handled separately by parse button
-  fields[k].addEventListener('input', inputHandler);
+  if (k === 'tyreCode') return;
+  fields[k].addEventListener('input', () => {
+    userProvided[k] = toNum(fields[k].value) !== null;
+    if (userProvided[k]) { computedMarker[k] = false; tags[k].innerHTML = ''; }
+  });
 });
-
-/* tyre code parse */
-el('parseTyre').addEventListener('click', ()=>{
+/* tyreCode parse button (fills tire field but we treat it as user-provided) */
+el('parseTyre').addEventListener('click', () => {
   const code = fields.tyreCode.value.trim();
   const d = tyreDiameterFromCode(code);
-  if (d === null) { alert('tyre code not recognized (use 185/55R15)'); return; }
-  fields.tire.value = d.toFixed(3);
-  markUserProvided('tire', true);
-  lastEdited = 'tire'; lastEditedEl.textContent = 'tire';
-  autoCompute();
+  if (d === null) { alert('Tyre code not recognized — use format 185/55R15'); return; }
+  fields.tire.value = Number(d.toFixed(3));
+  userProvided.tire = true;
+  computedMarker.tire = false;
+  tags.tire.innerHTML = '';
+  lastAction.textContent = 'Parsed tyre code';
 });
 
-/* Clear computed values button */
-el('resetComputed').addEventListener('click', ()=>{
-  Object.keys(computedMarker).forEach(k => {
-    if (computedMarker[k]) {
-      fields[k].value = '';
-      computedMarker[k] = false;
-    }
-    userProvided[k] = !!toNum(fields[k].value);
-    tags[k].textContent = '';
-  });
+/* -------------------------
+   Compute logic (manual)
+   ------------------------- */
+function calculate() {
+  // Refresh flags before computing
+  refreshUserProvidedFlags();
   warnEl.style.display = 'none';
-  debug.textContent = 'Cleared computed values.';
-});
+  output.textContent = '';
 
-/* ----- Core auto-compute algorithm ----- */
-function autoCompute() {
-  warnEl.style.display = 'none';
-  // Read current inputs
-  let raw = {
-    speed: toNum(fields.speed.value),
+  // Read inputs
+  const raw = {
+    speed_raw: toNum(fields.speed.value),
     unit: fields.speedUnit.value,
     tire: toNum(fields.tire.value),
     ratio: toNum(fields.ratio.value),
@@ -204,175 +205,225 @@ function autoCompute() {
     engine: toNum(fields.engine.value)
   };
 
-  // internal representation uses speed_mph
+  // Internal representation: speed_mph
   let state = {
-    speed_mph: raw.speed === null ? null : mphFrom(raw.speed, raw.unit),
+    speed_mph: raw.speed_raw === null ? null : mphFrom(raw.speed_raw, raw.unit),
     tire: raw.tire,
     ratio: raw.ratio,
     wheel: raw.wheel,
     engine: raw.engine
   };
 
-  // Respect userProvided: values that are userProvided should not be clobbered
-  // userProvided flags updated earlier in inputHandler; ensure they reflect current emptiness
-  userProvided.speed = toNum(fields.speed.value) !== null;
-  userProvided.tire = toNum(fields.tire.value) !== null;
-  userProvided.ratio = toNum(fields.ratio.value) !== null;
-  userProvided.wheel = toNum(fields.wheel.value) !== null;
-  userProvided.engine = toNum(fields.engine.value) !== null;
+  // Prepare an array to record formulas used and their numeric results
+  const steps = [];
 
-  // If tyre code present but tire empty, we didn't parse — don't assume
-  // computedMarker flags track which fields we set automatically
-  Object.keys(computedMarker).forEach(k => { if (!userProvided[k]) computedMarker[k] = false; });
-
-  // Iteratively try to deduce unknowns from knowns.
-  let changed = true; let iter = 0;
+  // Iteratively try to compute missing values
+  let changed = true;
+  let iter = 0;
   const MAX_ITER = 10;
   while (changed && iter++ < MAX_ITER) {
     changed = false;
 
-    // 1) wheels from speed+tire
-    if ((state.wheel === null) && (state.speed_mph !== null) && (state.tire !== null)) {
+    // wheels from speed + tire
+    if (state.wheel === null && state.speed_mph !== null && state.tire !== null && state.tire > NUM_TOL) {
       const val = wheelsRPM_from_speed(state.speed_mph, state.tire);
       state.wheel = val; changed = true; computedMarker.wheel = true;
+      steps.push({
+        formula: `Wheel RPM = (speed_mph × 1056) / (π × tire_diameter_in)`,
+        values: { speed_mph: state.speed_mph, tire_in: state.tire },
+        result: val
+      });
     }
 
-    // 2) wheels from engine+ratio
-    if ((state.wheel === null) && (state.engine !== null) && (state.ratio !== null) && Math.abs(state.ratio) > NUM_TOL) {
+    // wheel from engine + ratio
+    if (state.wheel === null && state.engine !== null && state.ratio !== null && Math.abs(state.ratio) > NUM_TOL) {
       const val = wheels_from_engine_and_ratio(state.engine, state.ratio);
       state.wheel = val; changed = true; computedMarker.wheel = true;
+      steps.push({
+        formula: `Wheel RPM = Engine RPM / Transmission ratio`,
+        values: { engine_rpm: state.engine, ratio: state.ratio },
+        result: val
+      });
     }
 
-    // 3) engine from wheels+ratio
-    if ((state.engine === null) && (state.wheel !== null) && (state.ratio !== null)) {
+    // engine from wheels + ratio
+    if (state.engine === null && state.wheel !== null && state.ratio !== null) {
       const val = engine_from_wheels_and_ratio(state.wheel, state.ratio);
       state.engine = val; changed = true; computedMarker.engine = true;
+      steps.push({
+        formula: `Engine RPM = Wheel RPM × Transmission ratio`,
+        values: { wheel_rpm: state.wheel, ratio: state.ratio },
+        result: val
+      });
     }
 
-    // 4) ratio from engine and wheels
-    if ((state.ratio === null) && (state.engine !== null) && (state.wheel !== null) && Math.abs(state.wheel) > NUM_TOL) {
+    // ratio from engine + wheels
+    if (state.ratio === null && state.engine !== null && state.wheel !== null && Math.abs(state.wheel) > NUM_TOL) {
       const val = ratio_from_engine_and_wheels(state.engine, state.wheel);
       state.ratio = val; changed = true; computedMarker.ratio = true;
+      steps.push({
+        formula: `Transmission ratio = Engine RPM / Wheel RPM`,
+        values: { engine_rpm: state.engine, wheel_rpm: state.wheel },
+        result: val
+      });
     }
 
-    // 5) speed from wheels+tire
-    if ((state.speed_mph === null) && (state.wheel !== null) && (state.tire !== null)) {
+    // speed from wheels + tire
+    if (state.speed_mph === null && state.wheel !== null && state.tire !== null) {
       const val = speed_from_wheelsRPM(state.wheel, state.tire);
       state.speed_mph = val; changed = true; computedMarker.speed = true;
+      steps.push({
+        formula: `Speed (mph) = Wheel RPM × π × tire_diameter_in / 1056`,
+        values: { wheel_rpm: state.wheel, tire_in: state.tire },
+        result: val
+      });
     }
 
-    // 6) tire from speed + wheels
-    if ((state.tire === null) && (state.speed_mph !== null) && (state.wheel !== null) && Math.abs(state.wheel) > NUM_TOL) {
-      // rearrange speed formula: tire = (speed_mph * 1056) / (π * wheelsRPM)
+    // tire from speed + wheels (rearranged)
+    if (state.tire === null && state.speed_mph !== null && state.wheel !== null && Math.abs(state.wheel) > NUM_TOL) {
       const val = (state.speed_mph * 1056) / (Math.PI * state.wheel);
       state.tire = val; changed = true; computedMarker.tire = true;
+      steps.push({
+        formula: `Tire diameter (in) = (speed_mph × 1056) / (π × Wheel RPM)`,
+        values: { speed_mph: state.speed_mph, wheel_rpm: state.wheel },
+        result: val
+      });
     }
-  }
+  } // end iterative
 
-  // Now we have computed state; handle conflicts
+  // Conflict detection: compare any computed value to user-provided ones
   const conflicts = [];
-  // compare computed values to user-provided ones (if both exist)
   if (userProvided.speed && state.speed_mph !== null) {
-    const userSpeedMph = mphFrom(toNum(fields.speed.value), fields.speedUnit.value);
-    if (Math.abs(userSpeedMph - state.speed_mph) > 1e-3) conflicts.push('speed');
+    const userMph = mphFrom(toNum(fields.speed.value), fields.speedUnit.value);
+    if (Math.abs(userMph - state.speed_mph) > 1e-6) conflicts.push('speed');
   }
   if (userProvided.tire && state.tire !== null) {
-    const userT = toNum(fields.tire.value);
-    if (Math.abs(userT - state.tire) > 1e-6) conflicts.push('tire');
+    if (Math.abs(toNum(fields.tire.value) - state.tire) > 1e-6) conflicts.push('tire');
   }
   if (userProvided.ratio && state.ratio !== null) {
-    const userR = toNum(fields.ratio.value);
-    if (Math.abs(userR - state.ratio) > 1e-6) conflicts.push('ratio');
+    if (Math.abs(toNum(fields.ratio.value) - state.ratio) > 1e-6) conflicts.push('ratio');
   }
   if (userProvided.wheel && state.wheel !== null) {
-    const userW = toNum(fields.wheel.value);
-    if (Math.abs(userW - state.wheel) > 1e-3) conflicts.push('wheel');
+    if (Math.abs(toNum(fields.wheel.value) - state.wheel) > 1e-6) conflicts.push('wheel');
   }
   if (userProvided.engine && state.engine !== null) {
-    const userE = toNum(fields.engine.value);
-    if (Math.abs(userE - state.engine) > 1e-3) conflicts.push('engine');
+    if (Math.abs(toNum(fields.engine.value) - state.engine) > 1e-6) conflicts.push('engine');
   }
 
-  // If conflicts exist, do not override user provided values. Show warning text describing the conflict.
   if (conflicts.length) {
     warnEl.style.display = 'block';
-    warnEl.textContent = 'Conflicting inputs detected for: ' + conflicts.join(', ') + '. Provided user values are preserved.';
+    warnEl.textContent = 'Conflicting inputs detected for: ' + conflicts.join(', ') + '. User-provided values are preserved.';
   } else {
     warnEl.style.display = 'none';
   }
 
-  // Update UI for fields that are not userProvided (i.e. computed) with computed values
-  // and set "computed" badges. Don't overwrite user-provided fields.
-  function setIfComputed(key, value, toDisplay, decimals=3) {
+  // Fill computed values into the UI (only if field not user-provided)
+  function setComputedIfFree(key, value, decimals=3) {
     if (value === null || value === undefined || isNaN(value)) return;
     if (!userProvided[key]) {
-      // mark computed and write value
-      computedMarker[key] = true;
       fields[key].value = Number(value).toFixed(decimals);
+      computedMarker[key] = true;
       tags[key].innerHTML = '<span class="computed-badge">computed</span>';
     } else {
-      // user-provided: clear computed tag
+      // it's user-provided — keep it and clear any computed marker
       tags[key].innerHTML = '';
+      computedMarker[key] = false;
     }
   }
 
-  // speed convert back to currently selected unit for UI
+  // speed display back to local unit
   if (state.speed_mph !== null) {
     const disp = fromMph(state.speed_mph, fields.speedUnit.value);
-    setIfComputed('speed', disp, 'speed', 3);
+    setComputedIfFree('speed', disp, 3);
   } else {
-    if (!userProvided.speed) fields.speed.value = '';
-    tags.speed.innerHTML = '';
+    if (!userProvided.speed) { fields.speed.value = ''; tags.speed.innerHTML=''; }
+  }
+  setComputedIfFree('tire', state.tire, 3);
+  setComputedIfFree('ratio', state.ratio, 4);
+  setComputedIfFree('wheel', state.wheel, 3);
+  setComputedIfFree('engine', state.engine, 2);
+
+  // Build output: show formulas & numeric results (the steps recorded)
+  if (steps.length === 0) {
+    output.textContent = 'No computed formulas applied. Provide at least two values that determine the rest (e.g., Speed + Tire, or Wheel RPM + Ratio).';
+  } else {
+    let txt = '';
+    txt += 'Applied formulas (in order):\n\n';
+    steps.forEach((s, idx) => {
+      txt += `${idx+1}. ${s.formula}\n`;
+      // show inputs
+      const vals = s.values;
+      Object.keys(vals).forEach(k => {
+        const label = k.replace(/_/g,' ');
+        txt += `   • ${label}: ${Number(vals[k]).toFixed(6)}\n`;
+      });
+      txt += `   => result: ${Number(s.result).toFixed(6)}\n\n`;
+    });
+
+    // Summary table
+    txt += 'Summary (final values):\n';
+    const dispSpeed = state.speed_mph === null ? null : Number(fromMph(state.speed_mph, fields.speedUnit.value).toFixed(6));
+    txt += `  Speed (${fields.speedUnit.value}): ${dispSpeed === null ? '—' : dispSpeed}\n`;
+    txt += `  Tire diameter (in): ${state.tire === null ? '—' : Number(state.tire).toFixed(6)}\n`;
+    txt += `  Transmission ratio: ${state.ratio === null ? '—' : Number(state.ratio).toFixed(6)}\n`;
+    txt += `  Wheel RPM: ${state.wheel === null ? '—' : Number(state.wheel).toFixed(6)}\n`;
+    txt += `  Engine RPM: ${state.engine === null ? '—' : Number(state.engine).toFixed(6)}\n\n`;
+
+    txt += 'Notes:\n';
+    txt += ' - Fields labelled "computed" were filled by formula; user-provided fields were preserved.\n';
+    if (conflicts.length) txt += ` - Conflicts detected for: ${conflicts.join(', ')}\n`;
+
+    output.textContent = txt;
   }
 
-  setIfComputed('tire', state.tire, 'tire', 3);
-  setIfComputed('ratio', state.ratio, 'ratio', 4);
-  setIfComputed('wheel', state.wheel, 'wheel', 3);
-  setIfComputed('engine', state.engine, 'engine', 2);
-
-  // If user provided a field that previously was computed, ensure tag cleared
-  Object.keys(userProvided).forEach(k => {
-    if (userProvided[k]) tags[k].innerHTML = '';
-  });
-
-  // Update debug panel / summary
-  const summary = {
-    speed_mph: state.speed_mph === null ? null : Number(state.speed_mph.toFixed(6)),
-    speed_display: state.speed_mph === null ? null : Number(fromMph(state.speed_mph, fields.speedUnit.value).toFixed(6)),
-    tire: state.tire === null ? null : Number(state.tire.toFixed(6)),
-    ratio: state.ratio === null ? null : Number(state.ratio.toFixed(6)),
-    wheelRPM: state.wheel === null ? null : Number(state.wheel.toFixed(6)),
-    engineRPM: state.engine === null ? null : Number(state.engine.toFixed(6)),
-    userProvided: {...userProvided},
-    computedMarker: {...computedMarker},
-    lastEdited: lastEdited || '—',
-    conflicts: conflicts
-  };
-
-  debug.textContent = JSON.stringify(summary, null, 2);
+  lastAction.textContent = 'Calculated';
 }
 
-/* Initialize with event listeners and an initial compute */
-autoCompute();
+/* Attach calculate button */
+el('calcBtn').addEventListener('click', calculate);
 
-/* attach input listeners to tyre code field too (not userProvided until parse) */
-fields.tyreCode.addEventListener('input', ()=> { /* do nothing until parse clicked */ });
-
-/* Keep track of userTyped when fields changed: if user types non-empty -> userProvided true; if cleared -> false */
-Object.keys(userProvided).forEach(k => {
-  if (k === 'speed') {
-    fields.speed.addEventListener('input', ()=> markUserProvided('speed', toNum(fields.speed.value) !== null));
-    fields.speedUnit.addEventListener('change', autoCompute);
-  } else {
-    fields[k].addEventListener('input', ()=> markUserProvided(k, toNum(fields[k].value) !== null));
-  }
+/* Clear computed values (only those marked computed) */
+el('clearComputed').addEventListener('click', () => {
+  Object.keys(computedMarker).forEach(k => {
+    if (computedMarker[k]) {
+      fields[k].value = '';
+      computedMarker[k] = false;
+    }
+    tags[k].innerHTML = '';
+    // userProvided remains the same (if user provided earlier it remains)
+  });
+  warnEl.style.display = 'none';
+  output.textContent = 'Cleared computed values. Press Calculate to recalc.';
+  lastAction.textContent = 'Cleared computed';
 });
 
-/* Recompute on unit change */
-fields.speedUnit.addEventListener('change', ()=> {
-  // If speed was computed (not user) adjust displayed value to new unit
-  autoCompute();
+/* Reset all fields & flags */
+el('resetAll').addEventListener('click', () => {
+  Object.keys(fields).forEach(k => fields[k].value = '');
+  Object.keys(tags).forEach(k => tags[k].innerHTML = '');
+  Object.keys(userProvided).forEach(k => userProvided[k] = false);
+  Object.keys(computedMarker).forEach(k => computedMarker[k] = false);
+  warnEl.style.display = 'none';
+  output.textContent = 'All fields reset. Enter values then press Calculate.';
+  lastAction.textContent = 'Reset all';
 });
+
+/* Make Enter key trigger Calculate when focused in inputs */
+const inputs = ['speed','tire','ratio','wheel','engine','tyreCode'];
+inputs.forEach(id => {
+  const node = fields[id] || el(id);
+  if (!node) return;
+  node.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      // prevent form submission default and call calculate
+      e.preventDefault();
+      calculate();
+    }
+  });
+});
+
+/* Initial output instruction (no auto-calc) */
+output.textContent = 'Waiting for user input. Enter values and press "Calculate (Enter)".\n\nExamples:\n - Speed (60 mph) + Tire (23 in) -> compute Wheel RPM and Engine RPM if Ratio provided.\n - Wheel RPM + Ratio -> compute Engine RPM.\n\nPress Calculate when ready.';
 </script>
 </body>
 </html>
