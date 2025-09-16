@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>RPM Calculator — deterministic compute (km/h default)</title>
+<title>RPM Calculator — advanced history logic (km/h default)</title>
 <style>
   :root{--bg:#07121b;--card:#0b1620;--muted:#9aa6b2;--text:#e6eef6;--accent:#1f6feb}
   body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(#051016,#07121b);color:var(--text);padding:18px}
@@ -24,6 +24,7 @@
   .hint{color:#8fb0d4;font-size:0.9rem;margin-top:8px}
   .mini{font-size:0.82rem;color:var(--muted)}
   .history { font-size:0.78rem; color:#a6d6ff; margin-left:6px; background: rgba(10,30,40,0.3); padding:2px 6px; border-radius:6px; }
+  label .badge { font-size:0.7rem; margin-left:6px; color:#9aa6b2 }
   @media (max-width:720px){ .col{min-width:100%} button{width:100%} }
 </style>
 </head>
@@ -31,13 +32,13 @@
   <div class="wrap">
     <h1>RPM Calculator</h1>
     <div class="muted">Enter any combination of values and press <strong>Calculate</strong>. Default speed unit is <strong>km/h</strong>.</div>
-    <div class="hint">Rule summary: you can provide any subset of the 5 values (Engine RPM, Transmission ratio, Wheel RPM, Tire diameter (in), Vehicle speed). The system will compute remaining values when possible. If you edit a previously computed field, the <em>oldest computed</em> field is freed and will be recalculated on the next Calculate.</div>
+    <div class="hint">Behavior: when you edit a computed value the system will free the oldest user-provided value so it can be recalculated. In other cases the oldest computed (or user) value will be freed according to policy. Calculation runs only on pressing Calculate (or Enter).</div>
 
     <div class="card" style="margin-top:14px">
       <div class="grid">
         <div class="col">
-          <label for="speed">Vehicle speed</label>
-          <input id="speed" type="number" inputmode="decimal" placeholder="e.g. 100 (km/h)" />
+          <label for="speed">Vehicle speed <span class="mini">(km/h)</span></label>
+          <input id="speed" type="number" inputmode="decimal" placeholder="e.g. 100" />
           <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
             <select id="speedUnit" style="width:110px">
               <option value="kmh" selected>km/h</option>
@@ -80,9 +81,11 @@
         <div class="small muted">Last action: <span id="lastAction">none</span></div>
       </div>
 
-      <div style="margin-top:12px">
-        <span class="mini">Computed history (oldest → newest):</span>
-        <span id="computedHistory" class="mini history">none</span>
+      <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+        <div class="mini">User history (oldest → newest):</div>
+        <div id="userHistory" class="history">none</div>
+        <div class="mini" style="margin-left:12px">Computed history (oldest → newest):</div>
+        <div id="computedHistory" class="history">none</div>
       </div>
 
       <div id="warn" class="warn" style="display:none"></div>
@@ -98,11 +101,11 @@
 
 <script>
 /* ============================
-   Helper functions & formulas
+   Helpers & formulas
    ============================ */
 const el = id => document.getElementById(id);
 const toNum = v => { if (v == null) return null; const s = (''+v).trim(); if (s==='') return null; const n = Number(s); return Number.isFinite(n) ? n : null; };
-const NUM_TOL = 1e-9;
+const EPS = 1e-9;
 
 const mphFrom = (value, unit) => unit === 'kmh' ? value * 0.621371 : value;
 const fromMph = (mph, unit) => unit === 'kmh' ? mph / 0.621371 : mph;
@@ -121,150 +124,174 @@ function tyreDiameterFromCode(code){
 }
 
 /* ============================
-   DOM refs & state trackers
+   DOM refs & state
    ============================ */
 const fields = {
-  speed: el('speed'),
-  speedUnit: el('speedUnit'),
-  tire: el('tire'),
-  tyreCode: el('tyreCode'),
-  ratio: el('ratio'),
-  wheel: el('wheel'),
-  engine: el('engine')
+  speed: el('speed'), speedUnit: el('speedUnit'),
+  tire: el('tire'), tyreCode: el('tyreCode'),
+  ratio: el('ratio'), wheel: el('wheel'), engine: el('engine')
 };
-const output = el('output');
-const warnEl = el('warn');
-const lastAction = el('lastAction');
-const computedHistoryEl = el('computedHistory');
+const output = el('output'), warnEl = el('warn'), lastAction = el('lastAction');
+const userHistoryEl = el('userHistory'), computedHistoryEl = el('computedHistory');
 
-// userProvided map – set true when user filled value (not computed)
 let userProvided = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
-// computedMarker — whether field currently has computed value
 let computedMarker = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
 
-// computedHistory: array of {key: 'speed'|'tire'|..., ts:Date.now()}, oldest first
-let computedHistory = [];
+// histories: oldest at index 0, newest at end
+let userHistory = [];      // array of {key, ts}
+let computedHistory = [];  // array of {key, ts}
 
-/* utility to update computedHistory display */
-function renderComputedHistory(){
-  if (computedHistory.length === 0) {
-    computedHistoryEl.textContent = 'none';
-    return;
-  }
-  computedHistoryEl.textContent = computedHistory.map((c,i)=> `${i+1}:${c.key}`).join('  →  ');
+/* history utilities */
+function pushUserHistory(key){
+  userHistory = userHistory.filter(x => x.key !== key);
+  userHistory.push({key, ts: Date.now()});
+  renderHistories();
 }
-
-/* mark userProvided flags based on current non-empty fields */
-function refreshUserProvidedFlags(){
-  userProvided.speed = toNum(fields.speed.value) !== null;
-  userProvided.tire = toNum(fields.tire.value) !== null;
-  userProvided.ratio = toNum(fields.ratio.value) !== null;
-  userProvided.wheel = toNum(fields.wheel.value) !== null;
-  userProvided.engine = toNum(fields.engine.value) !== null;
-}
-
-/* When we compute a field (not userProvided), record it in computedHistory (newest at end) */
-function recordComputed(key){
-  // remove existing entry of same key if present
-  computedHistory = computedHistory.filter(x=>x.key !== key);
+function pushComputedHistory(key){
+  computedHistory = computedHistory.filter(x => x.key !== key);
   computedHistory.push({key, ts: Date.now()});
-  computedMarker[key] = true;
-  renderComputedHistory();
+  renderHistories();
+}
+function removeFromHistories(key){
+  userHistory = userHistory.filter(x => x.key !== key);
+  computedHistory = computedHistory.filter(x => x.key !== key);
+  renderHistories();
+}
+function renderHistories(){
+  userHistoryEl.textContent = userHistory.length ? userHistory.map(h=>h.key).join(' → ') : 'none';
+  computedHistoryEl.textContent = computedHistory.length ? computedHistory.map(h=>h.key).join(' → ') : 'none';
 }
 
-/* Remove a computed entry from history and clear its marker */
-function removeComputed(key){
-  computedHistory = computedHistory.filter(x=>x.key !== key);
-  computedMarker[key] = false;
-  renderComputedHistory();
+/* helpers to free oldest entries */
+function freeOldestUser(excludeKey=null){
+  for (let i=0;i<userHistory.length;i++){
+    if (userHistory[i].key === excludeKey) continue;
+    const k = userHistory.splice(i,1)[0].key;
+    fields[k].value = '';
+    userProvided[k] = false;
+    // also remove from computedMarker if any (shouldn't be user)
+    computedMarker[k] = false;
+    renderHistories();
+    return k;
+  }
+  return null;
 }
-
-/* Clear oldest computed field (oldest = computedHistory[0]) — returns key freed or null */
-function freeOldestComputed(){
-  if (computedHistory.length === 0) return null;
-  const oldest = computedHistory.shift().key;
-  // clear value in UI and clear marker
-  fields[oldest].value = '';
-  computedMarker[oldest] = false;
-  userProvided[oldest] = false;
-  renderComputedHistory();
-  return oldest;
+function freeOldestComputed(excludeKey=null){
+  for (let i=0;i<computedHistory.length;i++){
+    if (computedHistory[i].key === excludeKey) continue;
+    const k = computedHistory.splice(i,1)[0].key;
+    fields[k].value = '';
+    computedMarker[k] = false;
+    userProvided[k] = false;
+    renderHistories();
+    return k;
+  }
+  return null;
+}
+/* free oldest among both histories (choose the oldest timestamp) */
+function freeOldestCombined(excludeKey=null){
+  if (userHistory.length===0 && computedHistory.length===0) return null;
+  // Build candidates (oldest entries)
+  const candUser = userHistory.length ? userHistory[0] : null;
+  const candComp = computedHistory.length ? computedHistory[0] : null;
+  if (candUser && (!candComp || candUser.ts <= candComp.ts)){
+    if (candUser.key === excludeKey && userHistory.length>1) {
+      return freeOldestUser(excludeKey);
+    } else if (candUser.key === excludeKey && userHistory.length===1) {
+      // only candidate is excluded – fallback to computed
+      return freeOldestComputed(excludeKey);
+    } else {
+      return freeOldestUser(excludeKey);
+    }
+  } else {
+    // choose computed
+    if (candComp.key === excludeKey && computedHistory.length>1) return freeOldestComputed(excludeKey);
+    if (candComp.key === excludeKey && computedHistory.length===1) return freeOldestUser(excludeKey);
+    return freeOldestComputed(excludeKey);
+  }
 }
 
 /* ============================
-   User edit behavior
+   User edit policy
    ============================ */
-/* When user edits a field:
-   - mark it as userProvided if non-empty
-   - if that field was previously computed (computedMarker true), FREE the oldest computed value (as per your rule)
-   - do NOT auto-calc; user must press Calculate
+/* Called when user types in a field (we do NOT auto-calc).
+   Policy:
+   - Mark field as userProvided (if not empty) and push to userHistory.
+   - If the edited field was previously computed, try to free the oldest user-provided field (excluding edited). If none exist, free the oldest computed.
+   - If the edited field was user-provided (i.e., changing an earlier user value), try free oldest computed first; if none, free oldest user.
+   - If user clears the field, remove from userHistory / computedHistory as needed.
 */
 function onUserEdit(key){
   const val = toNum(fields[key].value);
   const wasComputed = computedMarker[key];
-  // update userProvided flag based on value presence
+  const previouslyUser = userProvided[key];
+
+  // update userProvided flag
   userProvided[key] = val !== null;
 
-  if (wasComputed && val !== null) {
-    // free the oldest computed: but avoid freeing the edited field itself if it's the only computed item
-    if (computedHistory.length > 0) {
-      // If oldest equals edited and there is more than one, free next oldest preferentially
-      let freedKey = null;
-      if (computedHistory[0].key === key && computedHistory.length > 1) {
-        freedKey = computedHistory.splice(1,1)[0].key; // remove second item
-      } else {
-        freedKey = computedHistory.shift().key;
-      }
-      // clear freed field
-      fields[freedKey].value = '';
-      computedMarker[freedKey] = false;
-      userProvided[freedKey] = false;
-      renderComputedHistory();
-      lastAction.textContent = `Freed oldest computed: ${freedKey}`;
+  // If user provided a non-empty value now, push to userHistory
+  if (val !== null) {
+    pushUserHistory(key);
+    // If the field was previously computed, remove its computed marker and remove from computedHistory
+    if (wasComputed) {
+      computedMarker[key] = false;
+      computedHistory = computedHistory.filter(x=>x.key !== key);
+      renderHistories();
+      // Now free oldest user-provided preferentially (excluding the edited key)
+      const freed = freeOldestUser(key) || freeOldestComputed(key) || null;
+      if (freed) lastAction.textContent = `Freed oldest value: ${freed}`;
     } else {
-      // nothing to free
+      // edited a user-provided field (or changed an existing user field)
+      // free oldest computed first to keep user edits favored
+      const freed = freeOldestComputed(key) || freeOldestUser(key) || null;
+      if (freed) lastAction.textContent = `Freed oldest value: ${freed}`;
     }
-  }
-
-  // if user cleared value, clear userProvided and marker
-  if (val === null) {
+  } else {
+    // user cleared the field: remove from histories and flags
     userProvided[key] = false;
     computedMarker[key] = false;
-    // also remove from computedHistory if present
+    userHistory = userHistory.filter(x=>x.key !== key);
     computedHistory = computedHistory.filter(x=>x.key !== key);
-    renderComputedHistory();
+    renderHistories();
+    lastAction.textContent = `Cleared ${key}`;
   }
 }
 
-// attach inputs (no auto-calc)
+/* attach listeners (no auto-calc) */
 ['speed','tire','ratio','wheel','engine'].forEach(k => {
   fields[k].addEventListener('input', ()=> onUserEdit(k));
 });
 
-/* tyre code parse (fills tire and marks userProvided) */
+/* tyre code parser */
 el('parseTyre').addEventListener('click', ()=>{
   const code = fields.tyreCode.value.trim();
   const d = tyreDiameterFromCode(code);
   if (d === null) { alert('Tyre code not recognized — use 185/55R15'); return; }
   fields.tire.value = Number(d.toFixed(3));
   userProvided.tire = true;
-  // clear any computed tag for tire
-  computedMarker.tire = false;
-  // remove from history if existed
+  userHistory = userHistory.filter(x=>x.key !== 'tire'); // remove previous entry if any
+  pushUserHistory('tire');
+  // If tire was previously computed, remove from computedHistory
   computedHistory = computedHistory.filter(x=>x.key !== 'tire');
-  renderComputedHistory();
-  lastAction.textContent = 'Parsed tyre code → tire set';
+  computedMarker.tire = false;
+  renderHistories();
+  lastAction.textContent = 'Parsed tyre code';
 });
 
 /* ============================
    Solver (manual Calculate)
    ============================ */
 function calculate(){
-  refreshUserProvidedFlags();
+  // refresh flags
+  userProvided.speed = toNum(fields.speed.value) !== null;
+  userProvided.tire = toNum(fields.tire.value) !== null;
+  userProvided.ratio = toNum(fields.ratio.value) !== null;
+  userProvided.wheel = toNum(fields.wheel.value) !== null;
+  userProvided.engine = toNum(fields.engine.value) !== null;
+
   warnEl.style.display = 'none';
   output.textContent = '';
 
-  // Read current raw inputs
   const raw = {
     speed_raw: toNum(fields.speed.value),
     unit: fields.speedUnit.value,
@@ -274,84 +301,72 @@ function calculate(){
     engine: toNum(fields.engine.value)
   };
 
-  // Convert speed to internal mph representation
   let state = {
     speed_mph: raw.speed_raw === null ? null : mphFrom(raw.speed_raw, raw.unit),
-    tire: raw.tire,
-    ratio: raw.ratio,
-    wheel: raw.wheel,
-    engine: raw.engine
+    tire: raw.tire, ratio: raw.ratio, wheel: raw.wheel, engine: raw.engine
   };
 
-  // Steps to record formulas applied
+  // Steps used
   const steps = [];
 
-  // Iteratively deduce missing values (repeat until no change or max iterations)
-  let changed = true; let iter = 0; const MAX_ITER = 12;
+  // Use iterative inference
+  let changed = true, iter=0, MAX_ITER=12;
   while (changed && iter++ < MAX_ITER) {
     changed = false;
 
-    // Wheel from speed + tire
-    if (state.wheel === null && state.speed_mph !== null && state.tire !== null && state.tire > NUM_TOL) {
+    // wheel from speed + tire
+    if (state.wheel === null && state.speed_mph !== null && state.tire !== null && state.tire > EPS) {
       const val = wheelsRPM_from_speed(state.speed_mph, state.tire);
       state.wheel = val; changed = true;
-      steps.push({formula:'wheel = (speed_mph × 1056) / (π × tire_in)', inputs:{speed_mph:state.speed_mph,tire_in:state.tire}, result:val});
+      steps.push({formula:'wheel = (speed_mph × 1056) / (π × tire_in)', inputs:{speed_mph:state.speed_mph, tire_in:state.tire}, result:val});
     }
 
-    // Wheel from engine + ratio
-    if (state.wheel === null && state.engine !== null && state.ratio !== null && Math.abs(state.ratio) > NUM_TOL) {
+    // wheel from engine + ratio
+    if (state.wheel === null && state.engine !== null && state.ratio !== null && Math.abs(state.ratio) > EPS) {
       const val = wheels_from_engine_and_ratio(state.engine, state.ratio);
       state.wheel = val; changed = true;
-      steps.push({formula:'wheel = engine / ratio', inputs:{engine:state.engine,ratio:state.ratio}, result:val});
+      steps.push({formula:'wheel = engine / ratio', inputs:{engine:state.engine, ratio:state.ratio}, result:val});
     }
 
-    // Engine from wheel + ratio
+    // engine from wheel + ratio
     if (state.engine === null && state.wheel !== null && state.ratio !== null) {
       const val = engine_from_wheels_and_ratio(state.wheel, state.ratio);
       state.engine = val; changed = true;
-      steps.push({formula:'engine = wheel × ratio', inputs:{wheel:state.wheel,ratio:state.ratio}, result:val});
+      steps.push({formula:'engine = wheel × ratio', inputs:{wheel:state.wheel, ratio:state.ratio}, result:val});
     }
 
-    // Ratio from engine + wheel
-    if (state.ratio === null && state.engine !== null && state.wheel !== null && Math.abs(state.wheel) > NUM_TOL) {
+    // ratio from engine + wheel
+    if (state.ratio === null && state.engine !== null && state.wheel !== null && Math.abs(state.wheel) > EPS) {
       const val = ratio_from_engine_and_wheels(state.engine, state.wheel);
       state.ratio = val; changed = true;
-      steps.push({formula:'ratio = engine / wheel', inputs:{engine:state.engine,wheel:state.wheel}, result:val});
+      steps.push({formula:'ratio = engine / wheel', inputs:{engine:state.engine, wheel:state.wheel}, result:val});
     }
 
-    // Speed from wheel + tire
+    // speed from wheel + tire
     if (state.speed_mph === null && state.wheel !== null && state.tire !== null) {
       const val = speed_from_wheelsRPM(state.wheel, state.tire);
       state.speed_mph = val; changed = true;
-      steps.push({formula:'speed_mph = wheel × π × tire_in / 1056', inputs:{wheel:state.wheel,tire_in:state.tire}, result:val});
+      steps.push({formula:'speed_mph = wheel × π × tire_in / 1056', inputs:{wheel:state.wheel, tire_in:state.tire}, result:val});
     }
 
-    // Tire from speed + wheel
-    if (state.tire === null && state.speed_mph !== null && state.wheel !== null && Math.abs(state.wheel) > NUM_TOL) {
+    // tire from speed + wheel
+    if (state.tire === null && state.speed_mph !== null && state.wheel !== null && Math.abs(state.wheel) > EPS) {
       const val = (state.speed_mph * 1056) / (Math.PI * state.wheel);
       state.tire = val; changed = true;
-      steps.push({formula:'tire = (speed_mph × 1056) / (π × wheel)', inputs:{speed_mph:state.speed_mph,wheel:state.wheel}, result:val});
+      steps.push({formula:'tire = (speed_mph × 1056) / (π × wheel)', inputs:{speed_mph:state.speed_mph, wheel:state.wheel}, result:val});
     }
-  } // end inference loop
+  } // iterative closure
 
-  // Conflict detection: if userProvided and computed disagree, record conflict but DO NOT overwrite user value
+  // Conflict detection: if user provided value and computed value disagree, record conflict
   const conflicts = [];
   if (userProvided.speed && state.speed_mph !== null) {
     const userMph = mphFrom(toNum(fields.speed.value), fields.speedUnit.value);
     if (Math.abs(userMph - state.speed_mph) > 1e-6) conflicts.push('speed');
   }
-  if (userProvided.tire && state.tire !== null) {
-    if (Math.abs(toNum(fields.tire.value) - state.tire) > 1e-6) conflicts.push('tire');
-  }
-  if (userProvided.ratio && state.ratio !== null) {
-    if (Math.abs(toNum(fields.ratio.value) - state.ratio) > 1e-6) conflicts.push('ratio');
-  }
-  if (userProvided.wheel && state.wheel !== null) {
-    if (Math.abs(toNum(fields.wheel.value) - state.wheel) > 1e-6) conflicts.push('wheel');
-  }
-  if (userProvided.engine && state.engine !== null) {
-    if (Math.abs(toNum(fields.engine.value) - state.engine) > 1e-6) conflicts.push('engine');
-  }
+  if (userProvided.tire && state.tire !== null) { if (Math.abs(toNum(fields.tire.value) - state.tire) > 1e-6) conflicts.push('tire'); }
+  if (userProvided.ratio && state.ratio !== null) { if (Math.abs(toNum(fields.ratio.value) - state.ratio) > 1e-6) conflicts.push('ratio'); }
+  if (userProvided.wheel && state.wheel !== null) { if (Math.abs(toNum(fields.wheel.value) - state.wheel) > 1e-6) conflicts.push('wheel'); }
+  if (userProvided.engine && state.engine !== null) { if (Math.abs(toNum(fields.engine.value) - state.engine) > 1e-6) conflicts.push('engine'); }
 
   if (conflicts.length) {
     warnEl.style.display = 'block';
@@ -360,46 +375,38 @@ function calculate(){
     warnEl.style.display = 'none';
   }
 
-  // Fill values into UI for any field that is NOT userProvided (i.e., computed)
-  // For every computed field we record it in computedHistory (timestamp), update computedMarker
-  function fillIfNotUser(key, value, decimals=3) {
+  // Fill UI with computed values only when the field is not userProvided
+  // For each computed field recorded now, push to computedHistory (update timestamp if existed)
+  function fillIfFree(key, value, decimals=3){
     if (value === null || value === undefined || isNaN(value)) return;
     if (!userProvided[key]) {
       fields[key].value = Number(value).toFixed(decimals);
       computedMarker[key] = true;
-      recordComputed(key); // push to computedHistory (newest)
+      pushComputedHistory(key);
     } else {
-      // If userProvided, ensure we do not mark computed
-      // but if it was previously computed remove it from history
-      computedHistory = computedHistory.filter(x=>x.key !== key);
+      // ensure not marked computed
       computedMarker[key] = false;
-      renderComputedHistory();
+      computedHistory = computedHistory.filter(x=>x.key !== key);
+      renderHistories();
     }
   }
 
-  if (state.speed_mph !== null) {
-    const disp = fromMph(state.speed_mph, fields.speedUnit.value);
-    fillIfNotUser('speed', disp, 3);
-  }
+  if (state.speed_mph !== null) fillIfFree('speed', fromMph(state.speed_mph, fields.speedUnit.value), 3);
+  fillIfFree('tire', state.tire, 3);
+  fillIfFree('ratio', state.ratio, 4);
+  fillIfFree('wheel', state.wheel, 3);
+  fillIfFree('engine', state.engine, 2);
 
-  fillIfNotUser('tire', state.tire, 3);
-  fillIfNotUser('ratio', state.ratio, 4);
-  fillIfNotUser('wheel', state.wheel, 3);
-  fillIfNotUser('engine', state.engine, 2);
-
-  // Output formatting: formulas applied + final summary
+  // Build output text with steps and final results
   if (steps.length === 0) {
-    output.textContent = 'No computations performed — provide at least two independent values (e.g., Speed + Tire, or Wheel RPM + Ratio), then press Calculate.';
+    output.textContent = 'No computations performed. Provide at least two independent values (e.g. Speed + Tire, or Wheel RPM + Ratio) and press Calculate.';
   } else {
-    let txt = 'Formulas applied (chronological):\n\n';
-    steps.forEach((s, idx) => {
-      txt += `${idx+1}. ${s.formula}\n`;
-      Object.keys(s.inputs).forEach(k => {
-        txt += `     • ${k}: ${Number(s.inputs[k]).toFixed(6)}\n`;
-      });
-      txt += `     => result: ${Number(s.result).toFixed(6)}\n\n`;
+    let txt = 'Formulas applied (in order):\n\n';
+    steps.forEach((s,i) => {
+      txt += `${i+1}. ${s.formula}\n`;
+      Object.keys(s.inputs).forEach(k => { txt += `   • ${k}: ${Number(s.inputs[k]).toFixed(6)}\n`; });
+      txt += `   => result: ${Number(s.result).toFixed(6)}\n\n`;
     });
-
     txt += 'Final values (display):\n';
     const dispSpeed = state.speed_mph === null ? null : Number(fromMph(state.speed_mph, fields.speedUnit.value).toFixed(6));
     txt += `  Vehicle speed (${fields.speedUnit.value}): ${dispSpeed === null ? '—' : dispSpeed}\n`;
@@ -407,33 +414,29 @@ function calculate(){
     txt += `  Transmission ratio: ${state.ratio === null ? '—' : Number(state.ratio).toFixed(6)}\n`;
     txt += `  Wheel RPM: ${state.wheel === null ? '—' : Number(state.wheel).toFixed(6)}\n`;
     txt += `  Engine RPM: ${state.engine === null ? '—' : Number(state.engine).toFixed(6)}\n\n`;
-
-    txt += 'Notes:\n';
-    txt += ' - Fields marked "computed" were filled automatically (look at computed history badge).\n';
-    txt += ' - If you edit a computed field, the oldest computed field will be freed (cleared) so it can be recalculated on the next Calculate.\n';
-    if (conflicts.length) txt += ` - Conflicts detected for: ${conflicts.join(', ')} (user values preserved)\n`;
+    txt += 'Notes:\n - Computed fields are recorded in computed history (see badge). If you edit a computed field, the oldest user-provided value will be freed so it can be recalculated next time.\n';
+    if (conflicts.length) txt += ` - Conflicts: ${conflicts.join(', ')} (user values kept)\n`;
     output.textContent = txt;
   }
 
   lastAction.textContent = 'Calculated';
-  renderComputedHistory();
+  renderHistories();
 }
 
-/* ===============
-   Buttons & keys
-   =============== */
+/* ============================
+   Buttons & bindings
+   ============================ */
 el('calcBtn').addEventListener('click', calculate);
 
 el('clearComputed').addEventListener('click', ()=>{
-  // clear only computed fields
-  Object.keys(computedMarker).forEach(k=>{
-    if (computedMarker[k]) {
+  Object.keys(computedMarker).forEach(k => {
+    if (computedMarker[k]){
       fields[k].value = '';
       computedMarker[k] = false;
     }
   });
   computedHistory = [];
-  renderComputedHistory();
+  renderHistories();
   output.textContent = 'Cleared computed values.';
   lastAction.textContent = 'Cleared computed';
 });
@@ -442,14 +445,14 @@ el('resetAll').addEventListener('click', ()=>{
   Object.keys(fields).forEach(k => fields[k].value = '');
   userProvided = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
   computedMarker = { speed:false, tire:false, ratio:false, wheel:false, engine:false };
-  computedHistory = [];
-  renderComputedHistory();
+  userHistory = []; computedHistory = [];
+  renderHistories();
+  warnEl.style.display = 'none';
   output.textContent = 'Reset all fields.';
   lastAction.textContent = 'Reset all';
-  warnEl.style.display = 'none';
 });
 
-/* Enter key to trigger calculate on inputs */
+/* Enter key triggers calculate on inputs */
 ['speed','tire','ratio','wheel','engine','tyreCode'].forEach(id => {
   const node = fields[id] || el(id);
   if (!node) return;
@@ -458,9 +461,9 @@ el('resetAll').addEventListener('click', ()=>{
   });
 });
 
-/* Initial message */
-output.textContent = 'Waiting for input. Default speed unit is km/h. Enter some values then press Calculate.';
-renderComputedHistory();
+/* initial message */
+output.textContent = 'Waiting for input. Default speed unit is km/h. Enter your values and press "Calculate".';
+renderHistories();
 </script>
 </body>
 </html>
